@@ -15,6 +15,8 @@ var request = require('request');
 //Lastly, Cheerio is popular within the community, with continuous updates and a lot of downloads.
 var cheerio = require('cheerio');
 
+//I chose to use bluebird to promisify requests.
+//This prevents us from having to use nested callbacks so the timing works correctly between request and doing something with the data returned.
 var Promise = require('bluebird');
 
 var fs = require('fs');
@@ -25,69 +27,100 @@ var fs = require('fs');
 //This is the most elegant package to download for simple translation of json objects to a CSV file format.
 var json2csv = require('json2csv');
 
-var Promise = require('bluebird');
-
+//home url variable
 var homeURL = "http://www.shirts4mike.com/";
 
 //array to hold shirt links 
 var ShirtLinks = [];
 //array to hold shirt data
 var shirtData = [];
+//Array to hold links that have been scraped 
+var LinksSeen = [];
 
 //create a function to promisify our requests and return the body
 function requestPromise(shirtUrl) {
   return new Promise(function (resolve, reject) {
+    //if shirtUrl is provided request shirtUrl added to the homeURL
     if (shirtUrl !== undefined) {
       request(homeURL + shirtUrl, function (error, response, body) {
           if (error) {
-            return reject(error);
             console.log("There was an error scraping " + homeURL + shirtUrl + " the site may be down or you may need to check your connection.");
+            return reject(error);
+            
         }
+        //on resolve object
+          resolve({body: body, url: shirtUrl});
+          return (body);
 
-          resolve(body);
-          return body;
 
-      });
-
+      }); //end request homeURL + shirtUrl
+    //otherwise just request the homeURL
     } else {
-      request(homeURL, function (error, response, body){
+      request(homeURL, function (error, response, body) {
           if (error) {
-          return reject(error); 
           console.log("There was an error scraping " + homeURL + " the site may be down or you may need to check your connection.");
+          return reject(error); 
+          
          }
-
-          resolve(body);
+         //on resolve object
+          resolve({body: body, url: homeURL});
           return body;
 
 
       });
-    }
+    } //end else
 
   });
 
 }  //end request promise
 
+
+//create function to find shirt links and disperse into arrays for comparing data.
 function findShirtLinks(results) {
-  var $ = cheerio.load(results);
+  var $ = cheerio.load(results.body);
+  //emtpy/create links array we will use to make promises out of,
+  var Links = [];
+  //iterate over any link that contains the word shirt in it
   $("a[href*=shirt]").each(function() {
       //push the links to an array that we need to request.
       console.log($(this).attr("href"));
-      ShirtLinks.push(requestPromise($(this).attr("href")));
-      console.log(ShirtLinks);
-    });
-}
+      //push each link we find into links seen array, so when we loop later it wont re-add those we've seen
 
 
+      //check if that shirt link is a duplicate and that it has not been scraped by the program once before, if it hasnt 
+      //add it to the links we will make a promise out of and add it to the links seen array.
+      if ((Links.indexOf($(this).attr("href")) === -1) && (LinksSeen.indexOf($(this).attr("href")) === -1)) {
+        Links.push($(this).attr("href"));
+      }
+      //add links to links seen for later testing purposes.
+      if (LinksSeen.indexOf($(this).attr("href")) === -1) {
+      LinksSeen.push($(this).attr("href"));
+      console.log("These have been seen: " + LinksSeen);
+    }
+      //loop through all the links we grab and make them into promises
+    }); //end "a[href*=shirt].each"
+  //create promises out of the Links array and push them into the ShirtLinks array.
+  for (var i = 0; i < Links.length; i++) {
+      ShirtLinks.push(requestPromise(Links[i]));
+    }
 
+
+} //end findShirtLinks
+
+
+//main function that is the guts of our program.
 function scraper() {
-  //check if the data folder exists in our directory 
+  //check if the data folder exists in our directory, if it doesnt make the folder.
   if (!DataFolderExists('data')) {
     fs.mkdir('data');
   }
   //scrape the home page to get the first level of data
   requestPromise().then(function (results) {
   //get the shirt links and push them into an array
+  console.log("these are the first results body! :" + results.body);
+  //find the shirt links from our first scrape of the homepage.
   findShirtLinks(results);
+  //scrape shirtLinks we found from the homepage, pass it into the loop that runs until no more shirts are recognized.
   scrapeShirts(ShirtLinks);
 
 //find the shirt links, push them into the shirts link array.
@@ -97,48 +130,35 @@ function scraper() {
 }
 
 
-
+//function to scrape shirt links and promise all promises.
 function scrapeShirts(array) {
 
-  //array to promise all before doing things with results
+  //array to promise all links passed in before doing things with results
   var promiseArray = array;
 
   //variable for shirt data we will use later with json2csv.
   
 
-
+//promise all promises in the array and then do stuff with the data.
   Promise.all(promiseArray).then(function (arrayOfHtmlResults) {
+    console.log("these are the results!!!*** : " + arrayOfHtmlResults);
     //empty the shirt links array
     ShirtLinks = [];
     //clear the promise array after every pass 
     promiseArray = [];
-
+    
     //now go through each page we have found 
     for(var i = 0; i < arrayOfHtmlResults.length; i++) {
 
+      //check if each result is a shirt
+      isShirt(arrayOfHtmlResults[i]);
+      //check if each result is not a shirt, if it isn't it gets put back into the findShirtLinks function
+      isNotAShirt(arrayOfHtmlResults[i]);
 
-      //use cheerio to load the html of each request in the promise array
-      var $ = cheerio.load(arrayOfHtmlResults[i]);
-
-
-      //if the index from our html results array contains the input value add to cart, get the data
-      if (isShirt(arrayOfHtmlResults[i])) {
-
-      //format the data and push the returned shirtprops object to the shirt data variable
-      formatData(arrayOfHtmlResults[i]);
-                
-                
-                
-
-      //otherwise look for shirt links again on the page and make them into new promises pushing into the ShirtLinks array         
-            } else {
-              findShirtLinks(arrayOfHtmlResults[i]);
-            }
-      //after it looks again, fill the promise array with the links that got injected again.
           
     } //end for 
+    //refill our promise array with any new shirt links found during the scrape.
           promiseArray = ShirtLinks;
-          console.log("This is the promiseArray: " + i + promiseArray);
           
   //check if the promise array is empty, if it isn't call scrape shirts on the new promiseArray, otherwise write all the data we gathered.
         if (((promiseArray).length) !== 0) {
@@ -148,47 +168,63 @@ function scrapeShirts(array) {
         }
 
 
-  });
+  }); //end promise.all
 
 
 }  //end scrapeShirts
 
 
+//function to format data of any shirts we land on.
 function formatData(data) {
-  var $ = cheerio.load(data);
-  var ShirtURL = $(data).find('a').attr('href');
+  var $ = cheerio.load(data.body);
+  
               var time = new Date();
               //json array for json2csv
                 var ShirtProps = {
                       Title: $('title').html(),
                       Price: $('.price').html(),
                       ImageURL: $('img').attr('src'),
-                      URL: homeURL + ShirtURL,
+                      URL: homeURL + data.url,
                       Time: time.toString()
           } 
-    console.log("these are shirt props: " + ShirtProps.Title);
+    //push the shirt props we found into our data array for filewriting
     shirtData.push(ShirtProps);
    
     
 }  //end formatData
 
 
+//create a function that checks if the data is not a shirt.
+function isNotAShirt(html) {
+  //load the body property of the requestPromise object passed in.
+  var $ = cheerio.load(html.body);
+  if(($('input[value="Add to Cart"]').length) == 0) {
+      console.log("These dont have the cart: " + html.body);
+      //if its not pass it back into the findShirtsLink function to refill the Shirts array.
+      findShirtLinks(html);
+      console.log("isNotAShirt ShirtLinks: " + ShirtLinks);
+  } //end input value "Add to Cart"
+
+} //end is not a shirt
+
+
 
 // create a function that checks if we are on the actual shirt itself or another page of shirts.
 function isShirt(html) {
-  var $ = cheerio.load(html);
+  //load the body property of the requestPromise object passed in.
+  var $ = cheerio.load(html.body);
   if(($('input[value="Add to Cart"]').length) !== 0) {
-    console.log(html);
-    return true;
+    console.log("These have the cart: " + html.body);
+    formatData(html);
 
           
-  } //end if 
+  } //end if input value "Add to Cart"
 
 } //end isShirt
 
 
 
-
+//function to write shirtData
 function FileWrite(shirtData) {
   //fields variable holds the column headers
   var fields = ['Title', 'Price', 'ImageURL', 'URL', 'Time'];
@@ -204,9 +240,10 @@ function FileWrite(shirtData) {
   ((''+month).length<2 ? '0' : '') + month + '-' +
   ((''+day).length<2 ? '0' : '') + day;
 
+  //write the file
   fs.writeFile('./data/' + output + '.csv', csv, function (error) {
           if (error) throw error;
-          console.error('There was an error writing the CSV file.');
+          
           
     });
 
@@ -238,5 +275,5 @@ catch (error) {
 
 
 
-
+//run the program.
 scraper();

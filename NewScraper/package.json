@@ -1,0 +1,17 @@
+{
+  "name": "nodescraper",
+  "version": "1.0.0",
+  "description": "treehouse project6",
+  "main": "scraper2.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bluebird": "^3.4.1",
+    "cheerio": "^0.20.0",
+    "json2csv": "^3.6.2",
+    "request": "^2.74.0"
+  }
+}
